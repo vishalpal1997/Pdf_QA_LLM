@@ -3,7 +3,7 @@
 A Flask web application that lets you upload PDFs and chat about their content using LLaMA (via Ollama).  
 **Now with a live demo video!**
 
-[![Demo Video](https://img.youtube.com/vi/YOUTUBE_ID/0.jpg)](https://www.youtube.com/watch?v=YOUTUBE_ID)  
+[![Demo Video](screen-recording-2025-05-05-090852_kflI3lhN.mp4)  
 *(Click the image above to watch the demo video)*
 
 ## ✨ Features
