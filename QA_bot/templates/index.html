@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Chat with LLaMA</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .chat-container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 8px;
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .question {
+            background-color: #e3f2fd;
+            margin-right: 20%;
+        }
+        .answer {
+            background-color: #f5f5f5;
+            margin-left: 20%;
+        }
+        #chat-history {
+            height: 400px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            border: 1px solid #eee;
+            padding: 15px;
+            background-color: white;
+            border-radius: 5px;
+        }
+        .file-info {
+            display: none; /* Hidden by default */
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+        .btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        .btn-danger {
+            background-color: #f44336;
+            color: white;
+        }
+        .btn-primary {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .btn-secondary {
+            background-color: #008CBA;
+            color: white;
+        }
+        .error {
+            color: red;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .upload-container {
+            text-align: center;
+            padding: 30px;
+            border: 2px dashed #ddd;
+            border-radius: 5px;
+            margin: 20px 0;
+            display: block; /* Visible by default */
+        }
+        .typing-indicator {
+            display: none;
+            padding: 10px;
+            color: #666;
+            font-style: italic;
+        }
+        .spinner {
+            display: none;
+            margin-left: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Chat with LLaMA</h1>
+    
+    <div class="upload-container" {% if text_extracted %}style="display: none;"{% endif %}>
+        <form id="upload-form" method="post" enctype="multipart/form-data">
+            <input type="file" id="file-input" name="file" accept=".pdf" required style="display: none;">
+            <button type="button" onclick="document.getElementById('file-input').click()" class="btn btn-primary">
+                Select PDF File
+            </button>
+            <span id="file-name" style="margin-left: 10px;">No file selected</span>
+            <div style="margin-top: 15px;">
+                <button type="submit" class="btn btn-primary">Upload PDF</button>
+            </div>
+        </form>
+    </div>
+    
+    {% if text_extracted %}
+    <div class="file-info" style="display: block;">
+        <div>
+            <strong>Document:</strong> {{ filename }}
+        </div>
+        <div>
+            <button onclick="clearConversation()" class="btn btn-secondary">Clear Chat</button>
+            <button id="delete-btn" onclick="deletePDF()" class="btn btn-danger">
+                Delete PDF
+                <span id="delete-spinner" class="spinner">⌛</span>
+            </button>
+        </div>
+    </div>
+    
+    <div class="chat-container" style="display: block;">
+        <div id="chat-history">
+            {% for item in conversation %}
+            <div class="message question"><strong>Question:</strong> {{ item.question }}</div>
+            <div class="message answer"><strong>Answer:</strong> {{ item.answer | safe }}</div>
+            {% endfor %}
+            <div id="typing-indicator" class="typing-indicator">Assistant is typing...</div>
+        </div>
+        
+        <form id="chat-form" method="post">
+            <div class="input-group">
+                <input type="text" id="question-input" name="question" placeholder="Ask a question about the PDF..." required>
+                <button type="submit" class="btn btn-primary">Ask</button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+    
+    {% if error %}
+    <p class="error">{{ error }}</p>
+    {% endif %}
+
+    <script>
+        // File input display
+        document.getElementById('file-input')?.addEventListener('change', function(e) {
+            const fileName = e.target.files[0]?.name || 'No file selected';
+            document.getElementById('file-name').textContent = fileName;
+        });
+
+        // Auto-scroll chat to bottom
+        const chatHistory = document.getElementById('chat-history');
+        if (chatHistory) {
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        // Handle form submission with AJAX
+        const chatForm = document.getElementById('chat-form');
+        if (chatForm) {
+            chatForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                sendQuestion();
+            });
+        }
+
+        function sendQuestion() {
+            const questionInput = document.getElementById('question-input');
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            // Add user question to chat immediately
+            addMessageToChat('user', question);
+            questionInput.value = '';
+            
+            // Show typing indicator
+            const typingIndicator = document.getElementById('typing-indicator');
+            typingIndicator.style.display = 'block';
+            scrollToBottom();
+
+            // Send to server
+            fetch('/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `question=${encodeURIComponent(question)}`
+            })
+            .then(response => response.text())
+            .then(html => {
+                // Create temporary DOM to parse the response
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const newMessages = doc.querySelectorAll('#chat-history .message');
+                
+                // Hide typing indicator
+                typingIndicator.style.display = 'none';
+                
+                // Add new messages to chat
+                newMessages.forEach(message => {
+                    if (!document.getElementById('chat-history').innerHTML.includes(message.outerHTML)) {
+                        document.getElementById('chat-history').appendChild(message.cloneNode(true));
+                    }
+                });
+                
+                scrollToBottom();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                typingIndicator.style.display = 'none';
+                addMessageToChat('assistant', 'Sorry, an error occurred while processing your question.');
+            });
+        }
+
+        function addMessageToChat(sender, text) {
+            const chatHistory = document.getElementById('chat-history');
+            if (!chatHistory) return;
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender === 'user' ? 'question' : 'answer'}`;
+            
+            const senderLabel = document.createElement('strong');
+            senderLabel.textContent = sender === 'user' ? 'Question: ' : 'Answer: ';
+            
+            const messageText = document.createElement('span');
+            messageText.innerHTML = text;
+            
+            messageDiv.appendChild(senderLabel);
+            messageDiv.appendChild(messageText);
+            chatHistory.appendChild(messageDiv);
+            
+            scrollToBottom();
+        }
+
+        function scrollToBottom() {
+            const chatHistory = document.getElementById('chat-history');
+            if (chatHistory) {
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+        }
+
+        function clearConversation() {
+            fetch('/clear', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const chatHistory = document.getElementById('chat-history');
+                    if (chatHistory) {
+                        // Keep only the typing indicator
+                        const typingIndicator = document.getElementById('typing-indicator');
+                        chatHistory.innerHTML = '';
+                        if (typingIndicator) {
+                            chatHistory.appendChild(typingIndicator);
+                        }
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to clear conversation');
+            });
+        }
+        
+        function deletePDF() {
+            if (confirm('Are you sure you want to delete the current PDF and all conversations?')) {
+                const deleteBtn = document.getElementById('delete-btn');
+                const spinner = document.getElementById('delete-spinner');
+                
+                // Show loading state
+                deleteBtn.disabled = true;
+                spinner.style.display = 'inline-block';
+                
+                fetch('/delete_pdf', { 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        // Hide PDF-related sections
+                        document.querySelector('.file-info').style.display = 'none';
+                        document.querySelector('.chat-container').style.display = 'none';
+                        
+                        // Show upload section
+                        document.querySelector('.upload-container').style.display = 'block';
+                        
+                        // Reset file input
+                        document.getElementById('file-input').value = '';
+                        document.getElementById('file-name').textContent = 'No file selected';
+                    } else {
+                        throw new Error(data.message || 'Failed to delete PDF');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error: ' + error.message);
+                })
+                .finally(() => {
+                    deleteBtn.disabled = false;
+                    spinner.style.display = 'none';
+                });
+            }
+        }
+    </script>
+</body>
+</html>
